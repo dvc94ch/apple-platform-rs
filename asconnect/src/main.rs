@@ -1,5 +1,6 @@
 use anyhow::Result;
-use asconnect::certs_api::{self, CertificateType};
+use asconnect::certs_api::{self, Certificate, CertificateType};
+use asconnect::device_api::{BundleIdPlatform, Device};
 use asconnect::{AppStoreConnectClient, UnifiedApiKey};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -46,6 +47,10 @@ enum Commands {
         #[clap(subcommand)]
         command: CertificateCommand,
     },
+    Device {
+        #[clap(subcommand)]
+        command: DeviceCommand,
+    },
 }
 
 impl Commands {
@@ -66,6 +71,7 @@ impl Commands {
                     .write_json_file(api_key)?;
             }
             Self::Certificate { command } => command.run()?,
+            Self::Device { command } => command.run()?,
         }
         Ok(())
     }
@@ -92,7 +98,7 @@ enum CertificateCommand {
         /// Path to unified api key.
         #[clap(long)]
         api_key: PathBuf,
-        /// Id of certificate to revoke.
+        /// Id of certificate.
         id: String,
     },
     Revoke {
@@ -115,35 +121,14 @@ impl CertificateCommand {
                 let csr = std::fs::read_to_string(csr)?;
                 let resp = AppStoreConnectClient::from_json_path(&api_key)?
                     .create_certificate(csr, r#type)?;
-                println!(
-                    "{: <10} | {: <50} | {: <20}",
-                    "id", "name", "expiration date"
-                );
-                let expiration_date = resp
-                    .data
-                    .attributes
-                    .expiration_date
-                    .split_once('T')
-                    .unwrap()
-                    .0;
-                println!(
-                    "{: <10} | {: <50} | {: <10}",
-                    resp.data.id, resp.data.attributes.name, expiration_date
-                );
+                print_certificate_header();
+                print_certificate(&resp.data);
             }
             Self::List { api_key } => {
                 let resp = AppStoreConnectClient::from_json_path(&api_key)?.list_certificates()?;
-                println!(
-                    "{: <10} | {: <50} | {: <20}",
-                    "id", "name", "expiration date"
-                );
+                print_certificate_header();
                 for cert in &resp.data {
-                    let expiration_date =
-                        cert.attributes.expiration_date.split_once('T').unwrap().0;
-                    println!(
-                        "{: <10} | {: <50} | {: <10}",
-                        cert.id, cert.attributes.name, expiration_date
-                    );
+                    print_certificate(cert);
                 }
             }
             Self::Get { api_key, id } => {
@@ -160,4 +145,94 @@ impl CertificateCommand {
         }
         Ok(())
     }
+}
+
+fn print_certificate_header() {
+    println!(
+        "{: <10} | {: <50} | {: <20}",
+        "id", "name", "expiration date"
+    );
+}
+
+fn print_certificate(cert: &Certificate) {
+    let expiration_date = cert.attributes.expiration_date.split_once('T').unwrap().0;
+    println!(
+        "{: <10} | {: <50} | {: <10}",
+        cert.id, cert.attributes.name, expiration_date
+    );
+}
+
+#[derive(Subcommand)]
+enum DeviceCommand {
+    Register {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Name for device.
+        #[clap(long)]
+        name: String,
+        /// Platform.
+        #[clap(long)]
+        platform: BundleIdPlatform,
+        /// Unique Device Identifier
+        #[clap(long)]
+        udid: String,
+    },
+    List {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+    },
+    Get {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Id of device.
+        id: String,
+    },
+}
+
+impl DeviceCommand {
+    fn run(self) -> Result<()> {
+        match self {
+            Self::Register {
+                api_key,
+                name,
+                platform,
+                udid,
+            } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?
+                    .register_device(&name, platform, &udid)?;
+                print_device_header();
+                print_device(&resp.data);
+            }
+            Self::List { api_key } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?.list_devices()?;
+                print_device_header();
+                for device in &resp.data {
+                    print_device(device);
+                }
+            }
+            Self::Get { api_key, id } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?.get_device(&id)?;
+                print_device_header();
+                print_device(&resp.data);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn print_device_header() {
+    println!(
+        "{: <10} | {: <20} | {: <20} | {: <20}",
+        "id", "name", "model", "udid"
+    );
+}
+
+fn print_device(device: &Device) {
+    println!(
+        "{: <10} | {: <20} | {: <20} | {: <20}",
+        device.id, device.attributes.name, device.attributes.model, device.attributes.udid,
+    );
 }

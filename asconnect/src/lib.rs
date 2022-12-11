@@ -4,6 +4,7 @@
 
 pub mod api_token;
 pub mod certs_api;
+pub mod device_api;
 pub mod notary_api;
 
 use {
