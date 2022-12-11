@@ -1,8 +1,10 @@
 use anyhow::Result;
 use asconnect::certs_api::{self, Certificate, CertificateType};
 use asconnect::device_api::{BundleIdPlatform, Device};
+use asconnect::profile_api::{Profile, ProfileType};
 use asconnect::{AppStoreConnectClient, UnifiedApiKey};
 use clap::{Parser, Subcommand};
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -51,6 +53,10 @@ enum Commands {
         #[clap(subcommand)]
         command: DeviceCommand,
     },
+    Profile {
+        #[clap(subcommand)]
+        command: ProfileCommand,
+    },
 }
 
 impl Commands {
@@ -72,6 +78,7 @@ impl Commands {
             }
             Self::Certificate { command } => command.run()?,
             Self::Device { command } => command.run()?,
+            Self::Profile { command } => command.run()?,
         }
         Ok(())
     }
@@ -234,5 +241,99 @@ fn print_device(device: &Device) {
     println!(
         "{: <10} | {: <20} | {: <20} | {: <20}",
         device.id, device.attributes.name, device.attributes.model, device.attributes.udid,
+    );
+}
+
+#[derive(Subcommand)]
+enum ProfileCommand {
+    Create {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Name for profile.
+        #[clap(long)]
+        name: String,
+        /// Profile type.
+        #[clap(long)]
+        profile_type: ProfileType,
+        /// Bundle identifier.
+        #[clap(long)]
+        bundle_id: String,
+    },
+    List {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+    },
+    Get {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Id of device.
+        id: String,
+    },
+    Delete {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Id of device.
+        id: String,
+    },
+}
+
+impl ProfileCommand {
+    fn run(self) -> Result<()> {
+        match self {
+            Self::Create {
+                api_key,
+                name,
+                profile_type,
+                bundle_id,
+            } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?.create_profile(
+                    &name,
+                    profile_type,
+                    &bundle_id,
+                )?;
+                print_profile_header();
+                print_profile(&resp.data);
+            }
+            Self::List { api_key } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?.list_profiles()?;
+                print_profile_header();
+                for profile in &resp.data {
+                    print_profile(profile);
+                }
+            }
+            Self::Get { api_key, id } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?.get_profile(&id)?;
+                let profile = base64::decode(&resp.data.attributes.profile_content)?;
+                std::io::stdout().write_all(&profile)?;
+            }
+            Self::Delete { api_key, id } => {
+                AppStoreConnectClient::from_json_path(&api_key)?.delete_profile(&id)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn print_profile_header() {
+    println!(
+        "{: <10} | {: <20} | {: <20} | {: <20}",
+        "id", "name", "model", "udid"
+    );
+}
+
+fn print_profile(profile: &Profile) {
+    let expiration_date = profile
+        .attributes
+        .expiration_date
+        .split_once('T')
+        .unwrap()
+        .0;
+    println!(
+        "{: <10} | {: <20} | {: <20} | {: <20}",
+        profile.id, profile.attributes.name, profile.attributes.profile_type, expiration_date,
     );
 }

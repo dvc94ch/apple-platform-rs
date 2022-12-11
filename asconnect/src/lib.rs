@@ -6,6 +6,7 @@ pub mod api_token;
 pub mod certs_api;
 pub mod device_api;
 pub mod notary_api;
+pub mod profile_api;
 
 use {
     self::api_token::{AppStoreConnectToken, ConnectTokenEncoder},
