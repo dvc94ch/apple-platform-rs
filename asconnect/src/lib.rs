@@ -3,14 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 pub mod api_token;
+pub mod certs_api;
 pub mod notary_api;
 
 use {
     self::api_token::{AppStoreConnectToken, ConnectTokenEncoder},
-    crate::AppleCodesignError,
+    anyhow::Result,
     log::{debug, error},
-    reqwest::blocking::Client,
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
+    reqwest::blocking::{Client, ClientBuilder, RequestBuilder, Response},
+    serde::{Deserialize, Serialize},
     serde_json::Value,
     std::{fs::Permissions, io::Write, path::Path, sync::Mutex},
 };
@@ -25,6 +26,13 @@ fn set_permissions_private(p: &mut Permissions) {
 
 #[cfg(windows)]
 fn set_permissions_private(_: &mut Permissions) {}
+
+/// Obtain the default [Client] to use for HTTP requests.
+fn default_client() -> Result<Client> {
+    Ok(ClientBuilder::default()
+        .user_agent("asconnect crate (https://crates.io/crates/asconnect)")
+        .build()?)
+}
 
 /// Represents all metadata for an App Store Connect API Key.
 ///
@@ -57,17 +65,14 @@ impl UnifiedApiKey {
         issuer_id: impl ToString,
         key_id: impl ToString,
         path: impl AsRef<Path>,
-    ) -> Result<Self, AppleCodesignError> {
+    ) -> Result<Self> {
         let pem_data = std::fs::read(path.as_ref())?;
 
-        let parsed = pem::parse(pem_data).map_err(|e| {
-            AppleCodesignError::AppStoreConnectApiKey(format!("error parsing PEM: {}", e))
-        })?;
+        let parsed =
+            pem::parse(pem_data).map_err(|e| anyhow::anyhow!("error parsing PEM: {}", e))?;
 
         if parsed.tag != "PRIVATE KEY" {
-            return Err(AppleCodesignError::AppStoreConnectApiKey(
-                "does not look like a PRIVATE KEY".to_string(),
-            ));
+            anyhow::bail!("does not look like a PRIVATE KEY");
         }
 
         let private_key = base64::encode(parsed.contents);
@@ -80,19 +85,19 @@ impl UnifiedApiKey {
     }
 
     /// Construct an instance from serialized JSON.
-    pub fn from_json(data: impl AsRef<[u8]>) -> Result<Self, AppleCodesignError> {
+    pub fn from_json(data: impl AsRef<[u8]>) -> Result<Self> {
         Ok(serde_json::from_slice(data.as_ref())?)
     }
 
     /// Construct an instance from a JSON file.
-    pub fn from_json_path(path: impl AsRef<Path>) -> Result<Self, AppleCodesignError> {
+    pub fn from_json_path(path: impl AsRef<Path>) -> Result<Self> {
         let data = std::fs::read(path.as_ref())?;
 
         Self::from_json(data)
     }
 
     /// Serialize this instance to a JSON object.
-    pub fn to_json_string(&self) -> Result<String, AppleCodesignError> {
+    pub fn to_json_string(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(&self)?)
     }
 
@@ -104,7 +109,7 @@ impl UnifiedApiKey {
     ///
     /// Permissions on the resulting file may not be as restrictive as desired. It is up
     /// to callers to additionally harden as desired.
-    pub fn write_json_file(&self, path: impl AsRef<Path>) -> Result<(), AppleCodesignError> {
+    pub fn write_json_file(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
         if let Some(parent) = path.parent() {
@@ -124,15 +129,11 @@ impl UnifiedApiKey {
 }
 
 impl TryFrom<UnifiedApiKey> for ConnectTokenEncoder {
-    type Error = AppleCodesignError;
+    type Error = anyhow::Error;
 
-    fn try_from(value: UnifiedApiKey) -> Result<Self, Self::Error> {
-        let der = base64::decode(value.private_key).map_err(|e| {
-            AppleCodesignError::AppStoreConnectApiKey(format!(
-                "failed to base64 decode private key: {}",
-                e
-            ))
-        })?;
+    fn try_from(value: UnifiedApiKey) -> Result<Self> {
+        let der = base64::decode(value.private_key)
+            .map_err(|e| anyhow::anyhow!("failed to base64 decode private key: {}", e))?;
 
         Self::from_ecdsa_der(value.key_id, value.issuer_id, &der)
     }
@@ -142,22 +143,27 @@ impl TryFrom<UnifiedApiKey> for ConnectTokenEncoder {
 ///
 /// The client isn't generic. Don't get any ideas.
 pub struct AppStoreConnectClient {
-    pub client: Client,
+    client: Client,
     connect_token: ConnectTokenEncoder,
     token: Mutex<Option<AppStoreConnectToken>>,
 }
 
 impl AppStoreConnectClient {
+    pub fn from_json_path(path: &Path) -> Result<Self> {
+        let key = UnifiedApiKey::from_json_path(path)?;
+        AppStoreConnectClient::new(key.try_into()?)
+    }
+
     /// Create a new client to the App Store Connect API.
-    pub fn new(connect_token: ConnectTokenEncoder) -> Result<Self, AppleCodesignError> {
+    pub fn new(connect_token: ConnectTokenEncoder) -> Result<Self> {
         Ok(Self {
-            client: crate::ticket_lookup::default_client()?,
+            client: default_client()?,
             connect_token,
             token: Mutex::new(None),
         })
     }
 
-    pub fn get_token(&self) -> Result<String, AppleCodesignError> {
+    pub fn get_token(&self) -> Result<String> {
         let mut token = self.token.lock().unwrap();
 
         // TODO need to handle token expiration.
@@ -168,10 +174,7 @@ impl AppStoreConnectClient {
         Ok(token.as_ref().unwrap().clone())
     }
 
-    pub fn send_request<T: DeserializeOwned>(
-        &self,
-        request: reqwest::blocking::RequestBuilder,
-    ) -> Result<T, AppleCodesignError> {
+    pub fn send_request(&self, request: RequestBuilder) -> Result<Response> {
         let request = request.build()?;
         let url = request.url().to_string();
 
@@ -180,7 +183,7 @@ impl AppStoreConnectClient {
         let response = self.client.execute(request)?;
 
         if response.status().is_success() {
-            Ok(response.json::<T>()?)
+            Ok(response)
         } else {
             error!("HTTP error from {}", url);
 
@@ -194,7 +197,7 @@ impl AppStoreConnectClient {
                 error!("{}", String::from_utf8_lossy(body.as_ref()));
             }
 
-            Err(AppleCodesignError::NotarizeServerError)
+            anyhow::bail!("app store connect error");
         }
     }
 }

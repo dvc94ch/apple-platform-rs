@@ -384,7 +384,7 @@ impl Notarizer {
         &self,
         submission_id: &str,
     ) -> Result<SubmissionResponse, AppleCodesignError> {
-        self.client()?.get_submission(submission_id)
+        Ok(self.client()?.get_submission(submission_id)?)
     }
 
     pub fn wait_on_notarization(
@@ -432,7 +432,7 @@ impl Notarizer {
         submission_id: &str,
     ) -> Result<serde_json::Value, AppleCodesignError> {
         warn!("fetching notarization log for {}", submission_id);
-        self.client()?.get_submission_log(submission_id)
+        Ok(self.client()?.get_submission_log(submission_id)?)
     }
 
     /// Waits on an app store package upload and fetches and logs the upload log.
