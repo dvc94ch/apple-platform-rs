@@ -142,7 +142,7 @@ impl TryFrom<UnifiedApiKey> for ConnectTokenEncoder {
 ///
 /// The client isn't generic. Don't get any ideas.
 pub struct AppStoreConnectClient {
-    client: Client,
+    pub client: Client,
     connect_token: ConnectTokenEncoder,
     token: Mutex<Option<AppStoreConnectToken>>,
 }
@@ -157,7 +157,7 @@ impl AppStoreConnectClient {
         })
     }
 
-    fn get_token(&self) -> Result<String, AppleCodesignError> {
+    pub fn get_token(&self) -> Result<String, AppleCodesignError> {
         let mut token = self.token.lock().unwrap();
 
         // TODO need to handle token expiration.
@@ -168,7 +168,7 @@ impl AppStoreConnectClient {
         Ok(token.as_ref().unwrap().clone())
     }
 
-    pub(crate) fn send_request<T: DeserializeOwned>(
+    pub fn send_request<T: DeserializeOwned>(
         &self,
         request: reqwest::blocking::RequestBuilder,
     ) -> Result<T, AppleCodesignError> {
