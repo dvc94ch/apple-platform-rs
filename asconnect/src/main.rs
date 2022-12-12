@@ -1,6 +1,7 @@
 use anyhow::Result;
+use asconnect::bundle_api::{BundleId, BundleIdPlatform};
 use asconnect::certs_api::{self, Certificate, CertificateType};
-use asconnect::device_api::{BundleIdPlatform, Device};
+use asconnect::device_api::Device;
 use asconnect::profile_api::{Profile, ProfileType};
 use asconnect::{AppStoreConnectClient, UnifiedApiKey};
 use clap::{Parser, Subcommand};
@@ -15,6 +16,7 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
     let args = Args::parse();
     args.command.run()
 }
@@ -44,6 +46,10 @@ enum Commands {
         private_key: PathBuf,
         /// Path to write a unified api key.
         api_key: PathBuf,
+    },
+    Bundle {
+        #[clap(subcommand)]
+        command: BundleCommand,
     },
     Certificate {
         #[clap(subcommand)]
@@ -76,12 +82,91 @@ impl Commands {
                 UnifiedApiKey::from_ecdsa_pem_path(issuer_id, key_id, private_key)?
                     .write_json_file(api_key)?;
             }
+            Self::Bundle { command } => command.run()?,
             Self::Certificate { command } => command.run()?,
             Self::Device { command } => command.run()?,
             Self::Profile { command } => command.run()?,
         }
         Ok(())
     }
+}
+
+#[derive(Subcommand)]
+enum BundleCommand {
+    Register {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Bundle identifier.
+        #[clap(long)]
+        identifier: String,
+        /// Bundle name.
+        #[clap(long)]
+        name: String,
+    },
+    List {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+    },
+    Get {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Id of certificate.
+        id: String,
+    },
+    Delete {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Id of bundle id to revoke.
+        id: String,
+    },
+}
+
+impl BundleCommand {
+    fn run(self) -> Result<()> {
+        match self {
+            Self::Register {
+                api_key,
+                identifier,
+                name,
+            } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?
+                    .register_bundle_id(&identifier, &name)?;
+                print_bundle_id_header();
+                print_bundle_id(&resp.data);
+            }
+            Self::List { api_key } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?.list_bundle_ids()?;
+                print_bundle_id_header();
+                for bundle_id in &resp.data {
+                    print_bundle_id(bundle_id);
+                }
+            }
+            Self::Get { api_key, id } => {
+                let resp = AppStoreConnectClient::from_json_path(&api_key)?.get_bundle_id(&id)?;
+                print_bundle_id_header();
+                print_bundle_id(&resp.data);
+            }
+            Self::Delete { api_key, id } => {
+                AppStoreConnectClient::from_json_path(&api_key)?.delete_bundle_id(&id)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn print_bundle_id_header() {
+    println!("{: <10} | {: <20} | {: <30}", "id", "name", "identifier");
+}
+
+fn print_bundle_id(bundle_id: &BundleId) {
+    println!(
+        "{: <10} | {: <20} | {: <30}",
+        bundle_id.id, bundle_id.attributes.name, bundle_id.attributes.identifier,
+    );
 }
 
 #[derive(Subcommand)]

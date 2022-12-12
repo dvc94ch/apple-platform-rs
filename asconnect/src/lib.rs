@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 pub mod api_token;
+pub mod bundle_api;
 pub mod certs_api;
 pub mod device_api;
 pub mod notary_api;
@@ -11,7 +12,6 @@ pub mod profile_api;
 use {
     self::api_token::{AppStoreConnectToken, ConnectTokenEncoder},
     anyhow::Result,
-    log::{debug, error},
     reqwest::blocking::{Client, ClientBuilder, RequestBuilder, Response},
     serde::{Deserialize, Serialize},
     serde_json::Value,
@@ -178,28 +178,25 @@ impl AppStoreConnectClient {
 
     pub fn send_request(&self, request: RequestBuilder) -> Result<Response> {
         let request = request.build()?;
+        let method = request.method().to_string();
         let url = request.url().to_string();
 
-        debug!("{} {}", request.method(), url);
+        log::debug!("{} {}", request.method(), url);
 
         let response = self.client.execute(request)?;
 
         if response.status().is_success() {
             Ok(response)
         } else {
-            error!("HTTP error from {}", url);
-
             let body = response.bytes()?;
 
-            if let Ok(value) = serde_json::from_slice::<Value>(body.as_ref()) {
-                for line in serde_json::to_string_pretty(&value)?.lines() {
-                    error!("{}", line);
-                }
+            let msg = if let Ok(value) = serde_json::from_slice::<Value>(body.as_ref()) {
+                serde_json::to_string_pretty(&value)?
             } else {
-                error!("{}", String::from_utf8_lossy(body.as_ref()));
-            }
+                String::from_utf8_lossy(body.as_ref()).into()
+            };
 
-            anyhow::bail!("app store connect error");
+            anyhow::bail!("appstore connect error:\n{} {}\n{}", method, url, msg);
         }
     }
 }

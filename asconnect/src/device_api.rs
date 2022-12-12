@@ -1,7 +1,7 @@
+use crate::bundle_api::BundleIdPlatform;
 use crate::AppStoreConnectClient;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 const APPLE_CERTIFICATE_URL: &'static str = "https://api.appstoreconnect.apple.com/v1/devices";
 
@@ -73,34 +73,6 @@ pub struct DeviceCreateRequestAttributes {
     pub name: String,
     pub platform: String,
     pub udid: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BundleIdPlatform {
-    Ios,
-    MacOs,
-}
-
-impl std::fmt::Display for BundleIdPlatform {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let s = match self {
-            Self::Ios => "IOS",
-            Self::MacOs => "MAC_OS",
-        };
-        write!(f, "{}", s)
-    }
-}
-
-impl FromStr for BundleIdPlatform {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        Ok(match s {
-            "ios" => Self::Ios,
-            "macos" => Self::MacOs,
-            _ => anyhow::bail!("unsupported bundle id platform {}", s),
-        })
-    }
 }
 
 #[derive(Debug, Deserialize)]
