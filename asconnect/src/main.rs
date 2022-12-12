@@ -323,9 +323,10 @@ fn print_device_header() {
 }
 
 fn print_device(device: &Device) {
+    let model = device.attributes.model.as_deref().unwrap_or_default();
     println!(
         "{: <10} | {: <20} | {: <20} | {: <20}",
-        device.id, device.attributes.name, device.attributes.model, device.attributes.udid,
+        device.id, device.attributes.name, model, device.attributes.udid,
     );
 }
 

@@ -98,7 +98,7 @@ pub struct Device {
 #[serde(rename_all = "camelCase")]
 pub struct DeviceAttributes {
     pub device_class: String,
-    pub model: String,
+    pub model: Option<String>,
     pub name: String,
     pub platform: String,
     pub status: String,
