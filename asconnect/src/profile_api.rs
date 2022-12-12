@@ -11,6 +11,8 @@ impl AppStoreConnectClient {
         name: &str,
         profile_type: ProfileType,
         bundle_id: &str,
+        certificates: &[String],
+        devices: Option<&[String]>,
     ) -> Result<ProfileResponse> {
         let token = self.get_token()?;
         let body = ProfileCreateRequest {
@@ -20,16 +22,30 @@ impl AppStoreConnectClient {
                     profile_type: profile_type.to_string(),
                 },
                 relationships: ProfileCreateRequestRelationships {
-                    bundle_id: BundleId {
-                        data: BundleIdData {
+                    bundle_id: Ref {
+                        data: RefData {
                             id: bundle_id.into(),
                             r#type: "bundleIds".into(),
                         },
                     },
-                    // TODO
-                    certificates: vec![],
-                    // TODO
-                    devices: vec![],
+                    certificates: Refs {
+                        data: certificates
+                            .iter()
+                            .map(|certificate| RefData {
+                                id: certificate.into(),
+                                r#type: "certificates".into(),
+                            })
+                            .collect(),
+                    },
+                    devices: devices.map(|devices| Refs {
+                        data: devices
+                            .iter()
+                            .map(|device| RefData {
+                                id: device.into(),
+                                r#type: "devices".into(),
+                            })
+                            .collect(),
+                    }),
                 },
                 r#type: "profiles".into(),
             },
@@ -99,20 +115,26 @@ pub struct ProfileCreateRequestAttributes {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileCreateRequestRelationships {
-    pub bundle_id: BundleId,
-    pub certificates: Vec<()>,
-    pub devices: Vec<()>,
+    pub bundle_id: Ref,
+    pub certificates: Refs,
+    pub devices: Option<Refs>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BundleId {
-    pub data: BundleIdData,
+pub struct Ref {
+    pub data: RefData,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BundleIdData {
+pub struct Refs {
+    pub data: Vec<RefData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefData {
     pub id: String,
     pub r#type: String,
 }

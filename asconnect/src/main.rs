@@ -341,9 +341,15 @@ enum ProfileCommand {
         /// Profile type.
         #[clap(long)]
         profile_type: ProfileType,
-        /// Bundle identifier.
+        /// Bundle identifier id.
         #[clap(long)]
         bundle_id: String,
+        /// Certificate ids.
+        #[clap(long)]
+        certificate: Vec<String>,
+        /// Device ids.
+        #[clap(long)]
+        device: Option<Vec<String>>,
     },
     List {
         /// Path to unified api key.
@@ -374,11 +380,15 @@ impl ProfileCommand {
                 name,
                 profile_type,
                 bundle_id,
+                certificate,
+                device,
             } => {
                 let resp = AppStoreConnectClient::from_json_path(&api_key)?.create_profile(
                     &name,
                     profile_type,
                     &bundle_id,
+                    &certificate,
+                    device.as_deref(),
                 )?;
                 print_profile_header();
                 print_profile(&resp.data);
@@ -406,7 +416,7 @@ impl ProfileCommand {
 fn print_profile_header() {
     println!(
         "{: <10} | {: <20} | {: <20} | {: <20}",
-        "id", "name", "model", "udid"
+        "id", "name", "type", "expiration date"
     );
 }
 
