@@ -18,7 +18,7 @@ use {
         app_store_connect::{
             api_token::ConnectTokenEncoder,
             notary_api::{
-                NewSubmissionResponse, NotaryApiClient, SubmissionResponse,
+                NewSubmissionResponse, SubmissionResponse,
                 SubmissionResponseStatus,
             },
             AppStoreConnectClient,
@@ -273,11 +273,11 @@ impl Notarizer {
 }
 
 impl Notarizer {
-    fn client(&self) -> Result<NotaryApiClient, AppleCodesignError> {
+    fn client(&self) -> Result<AppStoreConnectClient, AppleCodesignError> {
         match &self.token_encoder {
-            Some(token) => Ok(NotaryApiClient::from(AppStoreConnectClient::new(
+            Some(token) => Ok(AppStoreConnectClient::new(
                 token.clone(),
-            )?)),
+            )?),
             None => Err(AppleCodesignError::NotarizeNoAuthCredentials),
         }
     }
