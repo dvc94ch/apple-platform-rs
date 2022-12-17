@@ -6,8 +6,9 @@ use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;
 
-const JSON_RPC_URL: &'static str =
-    "https://contentdelivery.itunes.apple.com/WebObjects/MZLabelService.woa/json";
+const DOMAIN: &'static str = "https://contentdelivery.itunes.apple.com";
+const JSON_RPC: &'static str = "/WebObjects/MZLabelService.woa/json";
+const IRIS: &'static str = "/MZContentDeliveryService/iris/v1";
 
 impl AppStoreConnectClient {
     fn lookup_software_for_bundle_id(&self, bundle_id: &str) -> Result<Vec<Attribute>> {
@@ -22,7 +23,7 @@ impl AppStoreConnectClient {
         });
         let req = self
             .client
-            .post(format!("{}/MZITunesSoftwareService", JSON_RPC_URL))
+            .post(format!("{}{}/MZITunesSoftwareService", DOMAIN, JSON_RPC))
             .bearer_auth(token)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
@@ -31,56 +32,50 @@ impl AppStoreConnectClient {
         Ok(resp.result.attributes)
     }
 
-    fn lookup_apple_id(&self, path: &Path) -> Result<String> {
-        let bundle_id = extract_bundle_id(path)?;
-        let attributes = self.lookup_software_for_bundle_id(&bundle_id)?;
-        let attribute = attributes
-            .into_iter()
-            .find(|attr| attr.r#type == "iOS App" && attr.software_type_enum == "Purple")
-            .context("failed to find app")?;
-        Ok(attribute.apple_id)
-    }
-
-    fn validate_purple_software_attributes(&self, apple_id: &str, _path: &Path) -> Result<()> {
+    fn create_build(&self, id: &str, version: &str, short_version_string: &str) -> Result<String> {
         let token = self.get_token()?;
         let body = json!({
-            "id": "0",
-            "jsonrpc": "2.0",
-            "method": "validatePurpleSoftwareAttributes",
-            "params": {
-                "AppleID": apple_id,
-                "SoftwareTypeEnum": "ios",
-                "ValidationOnly": "true",
-                "Base64EncodedFiles": {
-                    "swinfo-output.xml": {
-                        "Checksum": "",
-                        "GzipContent": "",
+            "data": {
+                "attributes": {
+                    "cfBundleShortVersionString": short_version_string,
+                    "cfBundleVersion": version,
+                    "platform": "IOS",
+                },
+                "relationships": {
+                    "app": {
+                        "data": {
+                            "id": id,
+                            "type": "apps",
+                        }
                     }
                 },
+                "type": "builds"
             }
         });
         let req = self
             .client
-            .post(format!("{}/MZITunesProducerService", JSON_RPC_URL))
+            .post(format!("{}{}/builds", DOMAIN, IRIS))
             .bearer_auth(token)
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .json(&body);
-        let resp: JsonRpcResult<ValidationResult> = self.send_request(req)?.json()?;
-        if !resp.result.success {
-            anyhow::bail!("{:?}", resp.result.errors);
-        }
-        Ok(())
-    }
-
-    pub fn validate(&self, path: &Path) -> Result<()> {
-        let apple_id = self.lookup_apple_id(path)?;
-        self.validate_purple_software_attributes(&apple_id, path)
+        let resp: Data = self.send_request(req)?.json()?;
+        Ok(resp.data.id)
     }
 
     pub fn upload(&self, path: &Path) -> Result<()> {
-        let apple_id = self.lookup_apple_id(path)?;
-        println!("{}", apple_id);
+        let app_data = extract_app_data(path)?;
+        let attributes = self.lookup_software_for_bundle_id(&app_data.cf_bundle_identifier)?;
+        let attribute = attributes
+            .into_iter()
+            .find(|attr| attr.r#type == "iOS App" && attr.software_type_enum == "Purple")
+            .context("failed to find app")?;
+        let apple_id = attribute.apple_id;
+        let build_id = self.create_build(
+            &apple_id,
+            &app_data.cf_bundle_version,
+            &app_data.cf_bundle_short_version_string,
+        )?;
         Ok(())
     }
 }
@@ -112,17 +107,42 @@ pub struct ValidationResult {
     pub success: bool,
 }
 
-fn extract_bundle_id(path: &Path) -> Result<String> {
+#[derive(Debug, Deserialize)]
+pub struct Data {
+    data: BuildId,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuildId {
+    id: String,
+}
+
+fn extract_app_data(path: &Path) -> Result<AppData> {
     let name = path.file_stem().unwrap().to_str().unwrap();
     let mut archive = ZipArchive::new(File::open(path)?)?;
     let info = archive.by_name(&format!("Payload/{}.app/Info.plist", name))?;
     let info: plist::Value = plist::from_reader_xml(info)?;
-    let bundle_identifier = info
-        .as_dictionary()
-        .context("invalid Info.plist")?
-        .get("CFBundleIdentifier")
-        .context("invalid Info.plist")?
-        .as_string()
-        .context("invalid Info.plist")?;
-    Ok(bundle_identifier.to_string())
+    let info = info.as_dictionary().context("invalid Info.plist")?;
+    fn get_string(dict: &plist::Dictionary, key: &str) -> Result<String> {
+        Ok(dict
+            .get(key)
+            .context("invalid Info.plist")?
+            .as_string()
+            .context("invalid Info.plist")?
+            .to_string())
+    }
+    let cf_bundle_identifier = get_string(info, "CFBundleIdentifier")?;
+    let cf_bundle_version = get_string(info, "CFBundleVersion")?;
+    let cf_bundle_short_version_string = get_string(info, "CFBundleShortVersionString")?;
+    Ok(AppData {
+        cf_bundle_identifier,
+        cf_bundle_version,
+        cf_bundle_short_version_string,
+    })
+}
+
+struct AppData {
+    cf_bundle_identifier: String,
+    cf_bundle_version: String,
+    cf_bundle_short_version_string: String,
 }
