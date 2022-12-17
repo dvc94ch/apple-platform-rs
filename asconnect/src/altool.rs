@@ -10,10 +10,7 @@ const JSON_RPC_URL: &'static str =
     "https://contentdelivery.itunes.apple.com/WebObjects/MZLabelService.woa/json";
 
 impl AppStoreConnectClient {
-    fn lookup_software_for_bundle_id(
-        &self,
-        bundle_id: &str,
-    ) -> Result<Vec<Attribute>> {
+    fn lookup_software_for_bundle_id(&self, bundle_id: &str) -> Result<Vec<Attribute>> {
         let token = self.get_token()?;
         let body = json!({
             "id": "0",
@@ -34,7 +31,7 @@ impl AppStoreConnectClient {
         Ok(resp.result.attributes)
     }
 
-    fn prepare_session(&self, path: &Path) -> Result<String> {
+    fn lookup_apple_id(&self, path: &Path) -> Result<String> {
         let bundle_id = extract_bundle_id(path)?;
         let attributes = self.lookup_software_for_bundle_id(&bundle_id)?;
         let attribute = attributes
@@ -44,14 +41,45 @@ impl AppStoreConnectClient {
         Ok(attribute.apple_id)
     }
 
-    pub fn validate(&self, path: &Path) -> Result<()> {
-        let apple_id = self.prepare_session(path)?;
-        println!("{}", apple_id);
+    fn validate_purple_software_attributes(&self, apple_id: &str, _path: &Path) -> Result<()> {
+        let token = self.get_token()?;
+        let body = json!({
+            "id": "0",
+            "jsonrpc": "2.0",
+            "method": "validatePurpleSoftwareAttributes",
+            "params": {
+                "AppleID": apple_id,
+                "SoftwareTypeEnum": "ios",
+                "ValidationOnly": "true",
+                "Base64EncodedFiles": {
+                    "swinfo-output.xml": {
+                        "Checksum": "",
+                        "GzipContent": "",
+                    }
+                },
+            }
+        });
+        let req = self
+            .client
+            .post(format!("{}/MZITunesProducerService", JSON_RPC_URL))
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .json(&body);
+        let resp: JsonRpcResult<ValidationResult> = self.send_request(req)?.json()?;
+        if !resp.result.success {
+            anyhow::bail!("{:?}", resp.result.errors);
+        }
         Ok(())
     }
 
+    pub fn validate(&self, path: &Path) -> Result<()> {
+        let apple_id = self.lookup_apple_id(path)?;
+        self.validate_purple_software_attributes(&apple_id, path)
+    }
+
     pub fn upload(&self, path: &Path) -> Result<()> {
-        let apple_id = self.prepare_session(path)?;
+        let apple_id = self.lookup_apple_id(path)?;
         println!("{}", apple_id);
         Ok(())
     }
@@ -75,6 +103,13 @@ pub struct Attribute {
     pub apple_id: String,
     pub r#type: String,
     pub software_type_enum: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ValidationResult {
+    pub errors: Vec<String>,
+    pub success: bool,
 }
 
 fn extract_bundle_id(path: &Path) -> Result<String> {
