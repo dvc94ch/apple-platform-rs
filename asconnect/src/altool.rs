@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use zip::ZipArchive;
 
@@ -59,8 +60,77 @@ impl AppStoreConnectClient {
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .json(&body);
-        let resp: Data = self.send_request(req)?.json()?;
+        let resp: CreateBuildResponse = self.send_request(req)?.json()?;
         Ok(resp.data.id)
+    }
+
+    fn create_upload(&self, build_id: &str, path: &Path) -> Result<()> {
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        let mut f = File::open(path)?;
+        let file_size = f.metadata()?.len();
+        let mut data = Vec::with_capacity(file_size as _);
+        f.read_to_end(&mut data)?;
+        let digest = md5::compute(&data);
+        let file_checksum = format!("{:x}", digest);
+
+        let token = self.get_token()?;
+        let body = json!({
+            "data": {
+                "attributes": {
+                    "assetType": "ASSET_DESCRIPTION",
+                    "fileName": file_name,
+                    "fileSize": file_size,
+                    "sourceFileChecksum": file_checksum,
+                    "uti": "public.binary",
+                },
+                "relationships": {
+                    "build": {
+                        "data": {
+                            "id": build_id,
+                            "type": "builds",
+                        }
+                    }
+                },
+                "type": "buildDeliveryFiles"
+            }
+        });
+        let req = self
+            .client
+            .post(format!("{}{}/buildDeliveryFiles", DOMAIN, IRIS))
+            .bearer_auth(&token)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .json(&body);
+        let resp: CreateBuildDeliveryResponse = self.send_request(req)?.json()?;
+        let id = resp.data.id;
+        let operations = resp.data.attributes.upload_operations;
+
+        for operation in operations {
+            let mut buf = Vec::with_capacity(operation.length as _);
+            f.seek(SeekFrom::Start(operation.offset))?;
+            (&mut f).take(operation.length).read_to_end(&mut buf)?;
+            let req = self.client.put(&operation.url).body(buf);
+            self.send_request(req)?;
+        }
+
+        let body = json!({
+            "data": {
+                "attributes": {
+                    "uploaded": true
+                },
+                "id": id,
+                "type": "buildDeliveryFiles",
+            },
+        });
+        let req = self
+            .client
+            .patch(format!("{}{}/buildDeliveryFiles", DOMAIN, IRIS))
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .json(&body);
+        self.send_request(req)?;
+        Ok(())
     }
 
     pub fn upload(&self, path: &Path) -> Result<()> {
@@ -76,24 +146,25 @@ impl AppStoreConnectClient {
             &app_data.cf_bundle_version,
             &app_data.cf_bundle_short_version_string,
         )?;
+        self.create_upload(&build_id, path)?;
         Ok(())
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JsonRpcResult<T> {
+struct JsonRpcResult<T> {
     pub result: T,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct Attributes {
+struct Attributes {
     pub attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct Attribute {
+struct Attribute {
     #[serde(rename = "AppleID")]
     pub apple_id: String,
     pub r#type: String,
@@ -101,20 +172,42 @@ pub struct Attribute {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct ValidationResult {
-    pub errors: Vec<String>,
-    pub success: bool,
+#[serde(rename_all = "camelCase")]
+struct CreateBuildResponse {
+    pub data: BuildData,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Data {
-    data: BuildId,
+#[serde(rename_all = "camelCase")]
+struct BuildData {
+    pub id: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct BuildId {
-    id: String,
+#[serde(rename_all = "camelCase")]
+struct CreateBuildDeliveryResponse {
+    pub data: BuildDeliveryData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildDeliveryData {
+    pub attributes: BuildDeliveryAttributes,
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildDeliveryAttributes {
+    pub upload_operations: Vec<UploadOperation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadOperation {
+    pub offset: u64,
+    pub length: u64,
+    pub url: String,
 }
 
 fn extract_app_data(path: &Path) -> Result<AppData> {

@@ -224,6 +224,7 @@ dependencies = [
  "env_logger 0.10.0",
  "jsonwebtoken",
  "log",
+ "md5",
  "pem",
  "plist",
  "rand",
