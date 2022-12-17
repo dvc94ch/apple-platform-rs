@@ -63,6 +63,22 @@ enum Commands {
         #[clap(subcommand)]
         command: ProfileCommand,
     },
+    Validate {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Path to ipa.
+        #[clap(long)]
+        file: PathBuf,
+    },
+    Upload {
+        /// Path to unified api key.
+        #[clap(long)]
+        api_key: PathBuf,
+        /// Path to ipa.
+        #[clap(long)]
+        file: PathBuf,
+    },
 }
 
 impl Commands {
@@ -86,6 +102,12 @@ impl Commands {
             Self::Certificate { command } => command.run()?,
             Self::Device { command } => command.run()?,
             Self::Profile { command } => command.run()?,
+            Self::Validate { api_key, file } => {
+                AppStoreConnectClient::from_json_path(&api_key)?.validate(&file)?;
+            }
+            Self::Upload { api_key, file } => {
+                AppStoreConnectClient::from_json_path(&api_key)?.upload(&file)?;
+            }
         }
         Ok(())
     }
